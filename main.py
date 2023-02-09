@@ -1,49 +1,47 @@
 import googleapiclient
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import requests, bs4
-from selenium import webdriver
-from selenium.webdriver.common.by import By
+import requests
+from bs4 import BeautifulSoup
 from datetime import date, datetime
 import openpyxl
-import datetime
 import schedule
 import re
 import telebot
 from id import name_groups, name_teacher, CalendarID, Token_bot, TG_Bot_ID
 
+# Создаем подключение к календарю указывая для него разрешение доступа
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 calendarId = '35fc2b53f41517c857c7cd03942345f7ae6770f333eb04e36c768d03ce453e04@group.calendar.google.com'
 SERVICE_ACCOUNT_FILE = 'TESTS.json'
 credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = googleapiclient.discovery.build('calendar', 'v3', credentials=credentials)
 
-options = webdriver.ChromeOptions()
-options.add_argument('--headless')
-options.add_argument('--no-sandbox')
-options.add_argument('window-size=1400,600')
-options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.69 Safari/537.36')
-wd = webdriver.Chrome(options=options)
-
+# Создаем переменную для работы с тг ботом
 bot = telebot.TeleBot(Token_bot)
-
 id_events = list()  # Храним id ивентов которые надо удалить
 Name_list = list()  # Хранит список всех преподователей и групп из планшетки
 
-def start_message(id_admin, text): # Бот для отправки сообщения об ошибки
-    for id in id_admin:
-        bot.send_message(id, f"{text}")
 
-def New_Events(text, description, day, time, color, group):  # Метод для загрузки данных в календарь для преподователей
+def start_message(message: str, text: str):
+    """Функция отправляет админам сообщения об ошибки"""
+    for i in message:
+        bot.send_message(i, f"{text}")
+
+
+def New_Events(text: str, description: str, day: str, time: str, color: str, group: str):  # Метод для загрузки данных в календарь для преподователей
+    """Функция загружает данные в календарь"""
     if '-' not in time:
         time = time.split(' — ')
     else:
         time = time.split('-')
 
+    time[0] = time[0].replace(' ', '')
+    time[-1] = time[-1].replace(' ', '')
     event = {
         'summary': text,
         'description': description,
-        'colorId': str(color),
+        'colorId': color,
         'start': {
             'dateTime': f'{day}T{time[0]}:00+03:00',
         },
@@ -51,75 +49,80 @@ def New_Events(text, description, day, time, color, group):  # Метод для
             'dateTime': f'{day}T{time[-1]}:00+03:00',
         }}
     try:
-        creatings = service.events().insert(calendarId=CalendarID[group], body=event).execute()  # Выполняем запрос о создании ивента
+        service.events().insert(calendarId=CalendarID[group], body=event).execute()  # Выполняем запрос о создании ивента
+        print(f'Был создан ивент - {group}')
     except Exception as e:
+        print('Error')
         start_message(TG_Bot_ID, f'Произошла ошибка \n'
                                  f'ошибка была вызвана этими данными: \n \n'
-                                 f'{text} - {description} - {day} - {time} - {color} - {group} \n'
+                                 f'text = {text}, \ndescription = {description}, \nday = {day}, \ntime = {time}, \ncolor = {color}, \ngroup = {group} \n'
                                  f'описание ошибки: {e}')
 
 
 def Delete_Events():
-    global id_events
+    """Функция удаляет найденные ивенты в календаре"""
     num = -1  # Создаем переменную для поиска id в списке
     for i in id_events:  # Проходимся по списку
         try:
             num += 1  # Сразу же увеличиваем ее
             service.events().delete(calendarId=CalendarID[i], eventId=id_events[num + 1]).execute()  # Находим нужный
-            print('Ивент был удален')
-        except Exception as e:
-            start_message(TG_Bot_ID, f'Была вызвана онибка в разделе: удаление ивентов \n'
-                                     f'описание ошибки: {e}')
+        except:
+            pass
 
     id_events.clear()
-    Parcer.Planchette()  # Запускаем функцию парсинга планшеток
+    Parsing.Planchette()  # Запускаем функцию парсинга планшеток
 
 
-def get_events_list(time):  # Принимает аргумент дата из планшетки
-    global Name_list
-    global id_events
-
+def get_events_list(time: str):  # Принимает аргумент дата из планшетки
+    """Функция находит id ивентов в календаре и записывает их в лист"""
     id_events.clear()  # Очищаем список
-
-    for i in Name_list:
-        try:
-            now = datetime.datetime.utcnow().isoformat() + 'Z'
-            events_result = service.events().list(calendarId=CalendarID[i], timeMin=now, maxResults=10, singleEvents=True, orderBy='startTime').execute()
-            events = events_result.get('items', [])  # Ищем ивенты
-            for event in events:  # Проходимся по найденным ивентам
-                start = event['start'].get('dateTime')  # Записываем в переменную время ивента
-                start = start.split('T')  # Разделяем на дату и время
-                strs = event.get('id')  # Получаем id ивента
-                if start[0] == time:  # если дата в ивенте == дате в планшетке
-                    id_events.append(i)  # Записываем в список у какой группы мы парсили календарь
-                    id_events.append(strs)  # добавляем в список id ивентов которые надо удалить
-        except Exception as e:
-            start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе поиска id ивентов \n'
-                                     f'Данные вызванные ошибку: {i} \n'
-                                     f'описание ошибки: {e}')
+    for i in CalendarID:
+        n = i.strip()
+        if n in name_teacher or n in name_groups:
+            try:
+                now = datetime.utcnow().isoformat() + 'Z'
+                events_result = service.events().list(calendarId=CalendarID[n], timeMin=now, maxResults=10,
+                                                      singleEvents=True, orderBy='startTime').execute()
+                events = events_result.get('items', [])  # Ищем ивенты
+                for event in events:  # Проходимся по найденным ивентам
+                    start = event['start'].get('dateTime')  # Записываем в переменную время ивента
+                    start = start.split('T')  # Разделяем на дату и время
+                    strs = event.get('id')  # Получаем id ивента
+                    if start[0] == time:  # если дата в ивенте == дате в планшетке
+                        id_events.append(n)  # Записываем в список у какой группы мы парсили календарь
+                        id_events.append(strs)  # добавляем в список id ивентов которые надо удалить
+            except Exception as e:
+                start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе поиска id ивентов \n'
+                                         f'Данные вызванные ошибку: {i} \n'
+                                         f'описание ошибки: {e}')
+        else:
+            start_message(TG_Bot_ID, f'Такого преподователя или группы нет | раздел поиск ивентов в календаре \n'
+                                     f'Данные которых нет в списке: \'{i}\' -- \'{n}\'')
 
     Name_list.clear()
     Delete_Events()
 
 
-def planchette_id():
+def planchet_id():
+    """Ишем id планшеток по нынешной дате и запускае функцию ее скачивания"""
+    start_message(TG_Bot_ID, f'Парсинг расписания планшетки начал работу')
     try:
         response = requests.get(url='https://drive.google.com/drive/folders/1UH5pcJc0pxkYFWBMI_bNCxrdlApqv3nX')
-        soup = bs4.BeautifulSoup(response.text, 'lxml')
+        soup = BeautifulSoup(response.text, 'lxml')
         soup = soup.find_all('div', class_='Q5txwe')  # Достаем название планшетки
 
         for number, i in enumerate(soup, start=0):  # Проходимся по всем найденным планшеткам
-            date = str(datetime.now()).split()[0]
-            dts = date.split('-')
-            date = f'{dts[-1]}.{dts[1]}.{dts[0]}'  # Преобразуем текущую дату в нужный вид
-            plans = (i.text)[0:-5]  # Убираем с названия планшетки '.xlsx'
+            dates = str(datetime.now()).split()[0]
+            dts = dates.split('-')
+            dates = f'{dts[-1]}.{dts[1]}.{dts[0]}'  # Преобразуем текущую дату в нужный вид
+            plans = i.text[0:-5]  # Убираем с названия планшетки '.xlsx'
 
-            if date == plans:  # Если текущая дата совпадает с датой планшетки
+            if dates == plans:  # Если текущая дата совпадает с датой планшетки
                 response = requests.get(url='https://drive.google.com/drive/folders/1UH5pcJc0pxkYFWBMI_bNCxrdlApqv3nX')
-                soup = bs4.BeautifulSoup(response.text, 'lxml')
+                soup = BeautifulSoup(response.text, 'lxml')
                 id_list = [i.replace('data-id="', '') for i in
-                       re.findall(r'data-id="[\w\-\+/#\(\)\*&\^:<>\?\!%\$]+', str(soup))]
-                data_exel(id=id_list[number])  # Запускаем скачивание планшетки по ее id
+                           re.findall(r'data-id="[\w\-\+/#\(\)\*&\^:<>\?\!%\$]+', str(soup))]
+                data_exel(identifier=id_list[number])  # Запускаем скачивание планшетки по ее id
                 break
     except Exception as e:
         start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе поиска  планшеток \n'
@@ -127,314 +130,292 @@ def planchette_id():
                                  f'!ИЗ-ЗА ОШИБКИ ДАЛЬНЕЙШАЯ РАБОТА ПРОГРАММЫ ОСТАНОВЛЕНА ДО ПОВТОРНОГО ЕГО ВЫЗОВА!')
 
 
-def data_exel(id):  # Функция скачивания планшетки
+def data_exel(identifier: str):  # Функция скачивания планшетки
+    """Функция скачивает найденную планшетку"""
     try:
-        planchette = requests.get(url=f'https://drive.google.com/uc?export=download&id={id}')
+        planchet = requests.get(url=f'https://drive.google.com/uc?export=download&id={identifier}')
         with open('planchette.xlsx', 'wb') as xlsx_file:
-            xlsx_file.write(planchette.content)
-        Parcer.planshet()  # Запускаем парсинг планшетки
+            xlsx_file.write(planchet.content)
+        Parsing.planchette_check()  # Запускаем парсинг планшетки
     except Exception as e:
         start_message(TG_Bot_ID, 'Была вызвана ошибка в разделе скачивания планшетки \n'
                                  f'описание ошибки: {e} \n'
                                  f'!ИЗ-ЗА ОШИБКИ ДАЛЬНЕЙШАЯ РАБОТА ПРОГРАММЫ ОСТАНОВЛЕНА ДО ПОВТОРНОГО ЕГО ВЫЗОВА!')
 
 
-class Parcer():  # Запускаем этот класс раз в неделю
-    def Par_Group():  # Парсинг расписания групп
-        '''Пасрит расписание групп'''
-        shedule_group = list()  # Засовываем разделенное расписание
-        today = str(date.today())  # Текущая дата
-        days = list()  # Засовываем дату (год-месяц-день) текущей пары
-        Groups = str()  # Для хранения группы
-
-        wd.get('https://rksi.ru/schedule')
-        select_group = wd.find_element(By.XPATH, '//*[@id="group"]')
-        list_group = select_group.text.split('\n')  # Достаем весь список групп
-
-        for i in list_group:  # Поиск всех преподователей и их парсинг
-            try:
-                if i in name_groups:  # Проверяем есть ли преподователь из списка на сайте
-                    shedule_group.append(f"&{i}")  # Добавляем в список какую группу мы парсим сейчас
-                    wd.get('https://rksi.ru/schedule')
-                    select_group = wd.find_element(By.XPATH, '//*[@id="group"]')
-                    list_group = select_group.text.split('\n')
-
-                    select_group.send_keys(i)
-                    wd.find_element(By.XPATH, '/html/body/div[10]/div[1]/main/form[1]/input').click()
-                    temp = [i.text.replace('\n', '||') for i in wd.find_elements(By.XPATH, '//b | //p')][1:-4]
-
-                    for j in temp:  # Разделяем список на подсписок
-                        shedule_group.append(j.split('||'))
-            except Exception as e:
-                start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе Парсинга расписания для групп \n'
-                                    f'Данные вызванные ошибку: {i} \n'
-                                    f'описание ошибки: {e}')
-
-        for name in shedule_group:  # Обрабатываем данные
-            try:
-                if name[0] == "&":
-                    Groups = f"{name[1:]}"
-                if len(name[0]) >= 15 and len(name[0]) <= 23 and name[0][0:1].isdigit():
-                    ns = name[0].split(',')  # Разделяем дату на 'день, месяц', 'день недели'
-                    nd = name[0].split(" ")  # Разделяем дату на 'день', 'месяц', 'день недели'
-                    ns.append(nd[1].replace(",", ""))  # Избавляемся от знака , в месяце и засовываем в список
-                    day = f"{ns[0]}{ns[1]}"  # Засовываем день месяц день недели
-                    ras = day.split()  # Храним список: день, месяц, день недели
-                    month = {'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04', 'мая': '05', 'июня': '06',
-                             'июля': '07', 'августа': '08', 'сентября': '09', 'октября': '10', 'ноября': '11',
-                             'декабря': '12'}
-
-                    if int(ras[0]) >= 1 and int(ras[0]) < 10:
-                        days.append(f"{today[0:4]}-{month[ras[1]]}-0{ras[0]}")
-                    else:
-                        days.append(f"{today[0:4]}-{month[ras[1]]}-{ras[0]}")
-                if len(name) == 3:  # Обработанные данные загружаем в календарь
-                    print(f'{Groups} -- {name[1]} - Время: {name[0]}: {name[2]} день {days[-1]}')
-                    New_Events(f'{name[1]}', f'Время: {name[0]}: {name[2]}', f'{days[-1]}', f'{name[0]}', '9', Groups)
-            except Exception as e:
-                start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе Парсинга расписания для групп \n'
-                                        f'Данные вызванные ошибку: {name} \n'
-                                        f'описание ошибки: {e}')
+class Parsing:  # Запускаем этот класс раз в неделю
+    """Класс содержит функции для парсинга и обработки данных"""
 
     def Par_Techer():  # Парсинг расписания преподователей
-        '''Парсит расписание преподователей'''
-        shedule_teacher = list()  # Засовываем разделенное расписание
+        """Функция достает расписание преподователей с сайта, обрабатывает и
+        вызывает функцию для загрузки их в календарь"""
+        print('Начал свою работу')
+        url = 'https://rksi.ru/schedule'
+        res = requests.get(url)
+        soup = BeautifulSoup(res.text, 'lxml')
+        lecturer = soup.find('select', id='teacher').find_all('option')
+        clear_list = []
+        preps = []
+        for i in lecturer:
+            clear_list.append(i.text)  # Засовываем все группы в список
+
+        for teacher in name_teacher:
+            if teacher in clear_list:
+                trash_response_text = requests.post(url, {'teacher': f'{teacher}'.encode('cp1251'),
+                                                          'stp': 'Показать!'.encode('cp1251')}).text
+                trash_prep_soup = BeautifulSoup(trash_response_text, 'lxml')
+
+                teachers_list = []
+                for i in trash_prep_soup.find_all(['p', 'b']):
+                    teachers_list.append(
+                        str(i).replace('<br/><b>', '||').replace('</b><br/>', '||').replace('<p>', '').replace('<b>', '').replace('</p>', '').replace('</b>', ''))
+
+                preps.append(f'&{teacher}')
+                for i in teachers_list:
+                    if '</' not in i:
+                        preps.append(i.split('||'))
+
         today = str(date.today())  # Текущая дата
-        days1 = list()  # Засовываем дату (год-месяц-день) текущей пары
+        days = list()  # Засовываем дату (год-месяц-день) текущей пары
+        groups = str()  # Для хранения группы
+        for name in preps:  # Обрабатываем данные
+            if name[0] == "&":
+                groups = f"{name[1:]}"
+            if 15 <= len(name[0]) <= 23 and name[0][0:1].isdigit():
+                nd = name[0].split(" ")  # Разделяем дату на 'день', 'месяц', 'день недели'
+                nd[1] = nd[1].replace(",", "")  # Избавляемся от знака , в месяце и засовываем в список
+                month = {'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04', 'мая': '05', 'июня': '06',
+                         'июля': '07', 'августа': '08', 'сентября': '09', 'октября': '10', 'ноября': '11',
+                         'декабря': '12'}
+                if len(nd[0]) == 1 and 1 <= int(nd[0]) < 10:
+                    days.append(f"{today[0:4]}-{month[nd[1]]}-0{nd[0]}")
+                elif len(nd[0]) == 2 and int(nd[0]) >= 10:
+                    days.append(f"{today[0:4]}-{month[nd[1]]}-{nd[0]}")
+            if len(name) == 3:  # Обработанные данные загружаем в календарь
+                #print(f'{groups} -- {name[1]} - Время: {name[0]}: {name[2]} день {days[-1]}')
+                New_Events(f'{name[1]}', f'Время: {name[0]}: {name[2]}', f'{days[-1]}', f'{name[0]}', '9', groups)
 
-        wd.get('https://rksi.ru/schedule')
-        select_group = wd.find_element(By.XPATH, '//*[@id="teacher"]')
-        list_teachers = select_group.text.split('\n')
+    def Par_Group():  # Парсинг расписания групп
+        """Функция достает расписание групп с сайта, обрабатывает и вызывает функцию для загрузки их в календарь"""
+        url = 'https://rksi.ru/schedule'
 
-        for i in list_teachers:  # Поиск всех преподователей и их парсинг
-            try:
-                if i in name_teacher:  # Проверяем есть ли преподователь из списка на сайте
-                    shedule_teacher.append(f"&{i}")  # Засовываем в этот список какого преподователя мы в данный момент парсим
-                    print(f'Сейчас я парсю: {i}')
-                    wd.get('https://rksi.ru/schedule')
-                    select_group = wd.find_element(By.XPATH, '//*[@id="teacher"]')
-                    list_teachers = select_group.text.split('\n')
-                    select_group.send_keys(str(i))
-                    wd.find_element(By.XPATH, '/html/body/div[10]/div[1]/main/form[2]/input').click()
-                    temp = [i.text.replace('\n', '||') for i in wd.find_elements(By.XPATH, '//b | //p')][1:-4]
+        res = requests.get(url)
+        soup = BeautifulSoup(res.text, 'lxml')
+        lecturer = soup.find('select', id='group').find_all('option')
+        clear_list = []
+        for i in lecturer:
+            clear_list.append(i.text)  # Засовываем все группы в список
 
-                    for j in temp:
-                        shedule_teacher.append(j.split("||"))
-            except Exception as e:
-                start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе Парсинга расписания для преподователей \n'
-                                    f'Данные вызванные ошибку: {i} \n'
-                                    f'описание ошибки: {e}')
+        preps = []
 
-        for name in shedule_teacher:
-            try:
-                if name[0] == "&":
-                    Teacher = f'{name[1:]}'  # вписываем преподователя которого мы парсим убирая триггерный символ
+        for group in name_groups:
+            if group in clear_list:
+                trash_response_text = requests.post(url, {'group': f'{group}'.encode('cp1251'),
+                                                          'stt': 'Показать!'.encode('cp1251')}).text
+                trash_prep_soup = BeautifulSoup(trash_response_text, 'lxml')
 
-                if len(name[0]) >= 15 and len(name[0]) <= 23 and name[0][0:1].isdigit():
-                    ns = name[0].split(',')  # Разделяем дату на 'день, месяц', 'день недели'
-                    nd = name[0].split(" ")  # Разделяем дату на 'день', 'месяц', 'день недели'
-                    ns.append(nd[1].replace(",", ""))  # Избавляемся от знака , в месяце и засовываем в список
-                    day = f"{ns[0]}{ns[1]}"  # Засовываем день месяц день недели
-                    ras = day.split()  # Храним список: день, месяц, день недели
-                    month = {'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04', 'мая': '05', 'июня': '06',
-                             'июля': '07', 'августа': '08', 'сентября': '09', 'октября': '10', 'ноября': '11',
-                             'декабря': '12'}
+                group_list = []
+                for i in trash_prep_soup.find_all(['p', 'b']):
+                    group_list.append(
+                        str(i).replace('<br/><b>', '||').replace('</b><br/>', '||').replace('<p>', '').replace('<b>',
+                                                                                                               '').replace(
+                            '</p>', '').replace('</b>', ''))
 
-                    if int(ras[0]) >= 1 and int(ras[0]) < 10:
-                        days1.append(f"{today[0:4]}-{month[ras[1]]}-0{ras[0]}")
-                    else:
-                        days1.append(f"{today[0:4]}-{month[ras[1]]}-{ras[0]}")
+                preps.append(f'&{group}')
+                for i in group_list:
+                    if '</' not in i:
+                        preps.append(i.split('||'))
 
-                if len(name) == 3:
-                    print(f'{Teacher} -- {name[1]} - Время: {name[0]}: {name[2]} день {days1[-1]}')
-                    New_Events(f'{name[1]}', f'Время: {name[0]}: {name[2]}', f'{days1[-1]}', f'{name[0]}', '7', Teacher)
-            except Exception as e:
-                start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе Парсинга расписания для преподователей \n'
-                                    f'Данные вызванные ошибку: {name} \n'
-                                    f'описание ошибки: {e}')
+        today = str(date.today())  # Текущая дата
+        days = list()  # Засовываем дату (год-месяц-день) текущей пары
+        groups = str()  # Для хранения группы
+
+        for name in preps:  # Обрабатываем данные
+            if name[0] == "&":
+                groups = f"{name[1:]}"
+            if 15 <= len(name[0]) <= 23 and name[0][0:1].isdigit():
+                nd = name[0].split(" ")  # Разделяем дату на 'день', 'месяц', 'день недели'
+                nd[1] = nd[1].replace(",", "")  # Избавляемся от знака , в месяце и засовываем в список
+                month = {'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04', 'мая': '05', 'июня': '06',
+                         'июля': '07', 'августа': '08', 'сентября': '09', 'октября': '10', 'ноября': '11',
+                         'декабря': '12'}
+                if len(nd[0]) == 1 and 1 <= int(nd[0]) < 10:
+                    days.append(f"{today[0:4]}-{month[nd[1]]}-0{nd[0]}")
+                elif len(nd[0]) == 2 and int(nd[0]) >= 10:
+                    days.append(f"{today[0:4]}-{month[nd[1]]}-{nd[0]}")
+
+            if len(name) == 3:  # Обработанные данные загружаем в календарь
+                #print(f'{groups} -- {name[1]} - Время: {name[0]}: {name[2]} день {days[-1]}')
+                New_Events(f'{name[1]}', f'Время: {name[0]}: {name[2]}', f'{days[-1]}', f'{name[0]}', '9', groups)
 
     def planshet():
-        global Name_list
-        global worksheet
+        """Функция достает и обрабатывает данные с планшетки и запускает функцию удаления ивентов"""
         wb1 = openpyxl.load_workbook('planchette.xlsx')
-        couple_list = ['1 пара', '2 пара', '3 пара', '4 пара', '5 пара', '6 пара', '7 пара']
-        dates = ''
+        couple = '1 пара'
 
-        try:
-            for couple in couple_list:
-                worksheet = wb1[couple]
-                dates = str(worksheet['B1'].value).split()
+        worksheet = wb1[couple]  # Открываем листы в планшетке
+        dates = str(worksheet['B1'].value).split()  # Достаем дату
 
-                dates = dates[0].split('-')
-                dates = f'{dates[2]}-{dates[1]}-{dates[0]}'
-
-                for i in range(0, worksheet.max_row):
-                    my_list_1 = []
-                    my_list_2 = []
-
-                    for col in worksheet.iter_cols(2, 5):
-                        a = col[i].value
-                        if a != None:
-                            my_list_1.append(a)
-
-                    if len(my_list_1) >= 4:
-                        group = my_list_1[1].replace('  ', ' ')  # Убираем лишние пробелы в названии группы
-                        prepods = my_list_1[2].replace('  ', ' ')  # Убираем лишние пробелы в имени преподователя
-                        if 'КПК' not in group and 'КПК' not in prepods:
-                            if '/' not in group:
-                                Name_list.append(group)
-                                Name_list.append(prepods)
-                            else:
-                                groups = group.split('/')
-
-                                Name_list.append(groups[0])
-                                Name_list.append(prepods)
-                                Name_list.append(groups[-1])
-                                Name_list.append(prepods)
-
-                    for col in worksheet.iter_cols(6, 9):
-                        a = col[i].value
-
-                        if a != None:
-                            my_list_2.append(a)
-
-                    if len(my_list_2) >= 4:
-                        group = my_list_2[1].replace('  ', ' ')
-                        prepods = my_list_2[2].replace('  ', ' ')
-                        if '/' not in group:
-                            Name_list.append(group)
-                            Name_list.append(prepods)
-                        else:
-                            groups = group.split('/')
-
-                            Name_list.append(groups[0])
-                            Name_list.append(prepods)
-                            Name_list.append(groups[-1])
-                            Name_list.append(prepods)
-
-        except Exception as e:
-            start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе парсинга планшетки(1) \n'
-                                     f'описание ошибки: {e}')
-            get_events_list(dates)  # Вызывает функцию для поиска и удаления ивентов в календаре
-        finally:
-            get_events_list(dates)  # Вызывает функцию для поиска и удаления ивентов в календаре
+        if '-' in dates[0]:  # Разделяем дату
+            dates = dates[0].split('-')
+        else:
+            dates = dates[0].split('.')
+        dates = f'{dates[2]}-{dates[1]}-{dates[0]}'  # Записываем дату в нужном нам формате
+        get_events_list(dates)  # Вызываем функцию поиска ивентов
 
     def Planchette():
-        '''Находит планшетку по id, скачивает её в виде exel файла и берёт из неё нужные данные'''  # response = requests.get(url='https://drive.google.com/drive/folders/1UH5pcJc0pxkYFWBMI_bNCxrdlApqv3nX?hl=ru')    # soup = bs4.BeautifulSoup(response.text, 'lxml')    # id_list = [i.replace('data-id="', '') for i in re.findall(r'data-id="[\w\-\+/#\(\)\*&\^:<>\?\!%\$]+', str(soup))]    #    # with open('planchette.xlsx', 'wb') as xlsx_file:    #     planchette = requests.get(url=f'https://drive.google.com/uc?export=download&id={id_list[1]}')    #     xlsx_file.write(planchette.content)    wb = openpyxl.load_workbook('file_exel/planchette.xlsx')
+        """Функция достает и обрабатывает данные с планшетки и запускает функцию загрузки их в календарь"""
         wb1 = openpyxl.load_workbook('planchette.xlsx')
-        couple_list = ['1 пара', '2 пара', '3 пара', '4 пара', '5 пара', '6 пара', '7 пара']
+        days = datetime.today().isoweekday()
+        roster = list()
+
+        if days == 1:
+            couple_list = ['1 пара', '2 пара', '3 пара', 'Классный час', '4 пара', '5 пара', '6 пара']
+        else:
+            couple_list = ['1 пара', '2 пара', '3 пара', '4 пара', '5 пара', '6 пара', '7 пара']
 
         try:
             for couple in couple_list:
                 worksheet = wb1[couple]
                 dates = str(worksheet['B1'].value).split()
-                dates = dates[0].split('-')
-                dates = f'{dates[2]}-{dates[1]}-{dates[0]}'
+                if '-' in dates[0]:
+                    dates = dates[0].split('-')
+                else:
+                    dates = dates[0].split('.')
+                dates1 = f'{dates[2]}-{dates[1]}-{dates[0]}'
                 couple_time = worksheet['A1'].value
-                spisok = list()
-
                 for i in range(0, worksheet.max_row):
                     my_list_1 = []
                     my_list_2 = []
                     for col in worksheet.iter_cols(2, 5):
                         a = col[i].value
-                        if a != None:
+                        if a is not None:
                             my_list_1.append(a)
 
-                    if len(my_list_1) >= 4:
+                    if len(my_list_1) == 3:
                         if '/' in my_list_1[1]:
-                            for i in my_list_1[1].split('/'):
-                                spisok.append([[couple_time], [my_list_1[3], f'{couple_time}: {my_list_1[2]} ауд {my_list_1[0]}', dates, couple_time, 9, i]])
+                            for j in my_list_1[1].split('/'):
+                                if 'КПК' not in my_list_1 and f'{dates[0]}.{dates[1]}.{dates[2]}' not in my_list_1:
+                                    roster.append([[couple_time],
+                                                   ['Без названия', f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}',
+                                                    dates1, couple_time, 7, my_list_2[1]]])
                         else:
-                            spisok.append([[couple_time], [my_list_1[3], f'{couple_time}: {my_list_1[2]} ауд {my_list_1[0]}', dates, couple_time, 9, my_list_1[1]]])
+                            if 'КПК' not in my_list_1 and f'{dates[0]}.{dates[1]}.{dates[2]}' not in my_list_1:
+                                roster.append([[couple_time],
+                                               ['Без названия', f'{couple_time}: {my_list_1[2]} ауд {my_list_1[0]}',
+                                                dates1, couple_time, 7, my_list_1[1]]])
+
+                    elif len(my_list_1) >= 4:
+                        if '/' in my_list_1[1]:
+                            for j in my_list_1[1].split('/'):
+                                roster.append(
+                                    [couple_time, my_list_1[3], f'{couple_time}: {my_list_1[2]} ауд {my_list_1[0]}',
+                                     dates1, couple_time, 9, j])
+                        else:
+                            roster.append([[couple_time],
+                                           [my_list_1[3], f'{couple_time}: {my_list_1[2]} ауд {my_list_1[0]}', dates1,
+                                            couple_time, 9, my_list_1[1]]])
 
                     for col in worksheet.iter_cols(6, 9):
                         a = col[i].value
 
-                        if a != None:
+                        if a is not None:
                             my_list_2.append(a)
 
-                    if len(my_list_2) >= 4:
+                    if len(my_list_2) == 3:
                         if '/' in my_list_2[1]:
-                            for i in my_list_2[1].split('/'):
-                                spisok.append([[couple_time], [my_list_2[3], f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}', dates, couple_time, 9, i]])
+                            for j in my_list_1[2].split('/'):
+                                if 'КПК' not in my_list_2 and f'{dates[0]}.{dates[1]}.{dates[2]}' not in my_list_2:
+                                    roster.append([[couple_time],
+                                                   ['Без названия', f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}',
+                                                    dates1, couple_time, 7, my_list_2[1]]])
+
                         else:
-                            spisok.append([[couple_time], [my_list_2[3], f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}', dates, couple_time, 7, my_list_2[1]]])
+                            if 'КПК' not in my_list_2 and f'{dates[0]}.{dates[1]}.{dates[2]}' not in my_list_2:
+                                roster.append([[couple_time],
+                                               ['Без названия', f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}',
+                                                dates1, couple_time, 7, my_list_2[1]]])
 
-                date = str(datetime.now())
-                date = date.split()
-                date = date[-1].split(':')
-                Nowtime = f'{int(date[0])}:{date[1]}'
+                    elif len(my_list_2) >= 4:
+                        if '/' in my_list_2[1]:
+                            for j in my_list_2[1].split('/'):
+                                roster.append([[couple_time],
+                                               [my_list_2[3], f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}',
+                                                dates1, couple_time, 9, j]])
+                        else:
+                            roster.append([[couple_time],
+                                           [my_list_2[3], f'{couple_time}: {my_list_2[2]} ауд {my_list_2[0]}', dates1,
+                                            couple_time, 7, my_list_2[1]]])
+                dates = str(datetime.now())
+                dates = dates.split()
+                dates = dates[-1].split(':')
+                now_time = f'{int(dates[0])}:{dates[1]}'
+            for i in roster:
+                time = i[0][0].split('-')
+                if now_time <= time[1]:
+                    groups = i[1][-1].strip()
+                    if groups in name_groups:
+                        New_Events(f'{i[1][0]}', f'Время: {i[1][1]}', f'{i[1][2]}', f'{i[1][3]}', f'9', groups)
+                    else:
+                        start_message(TG_Bot_ID, f'Таких данных нет парсинг планшетки планшетки(2) \n'
+                                                 f'Данные которых нет в списке: \'{groups}\'')
+            for i in roster:
+                time = i[0][0].split('-')
+                if now_time <= time[1]:
+                    teacher = i[1][1].split('. ')
+                    teacher = teacher[0].split(': ')
+                    teacher = f'{teacher[1]}.'
 
-                for i in spisok:
-                    time = i[0][0].split('-')
-                    if Nowtime <= time[1]:
-                        New_Events(f'{i[1][0]}', f'Время: {i[1][1]}', f'{i[1][2]}', f'{i[1][3]}', f'9', i[1][-1])
-
-                for i in spisok:
-                    time = i[0][0].split('-')
-                    if Nowtime <= time[1]:
-                        teacher = i[1][1].split('. ')
-                        teacher = teacher[0].split(': ')
-                        teacher = teacher[1].replace('  ', ' ')
-
-                        try:
-                            text = i[1][1].split(': ')
-                            text1 = text[-1].split('. ')
-                            New_Events(f'{i[1][0]}', f'Время: {text[0]}: {i[1][-1]} {text1[-1]}', f'{i[1][2]}', f'{i[1][3]}', f'7', f'{teacher}.')
-                        except Exception as e:
-                            start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе парсинга планшетки(2) \n'
-                                                     f'Данные вызванные ошибку: {i}'
-                                                     f'описание ошибки: {e}')
+                    try:
+                        text = i[1][1].split(': ')
+                        text1 = text[-1].split('. ')
+                        teacher = teacher.strip()
+                        New_Events(f'{i[1][0]}', f'Время: {text[0]}: {i[1][-1]} {text1[-1]}', f'{i[1][2]}',
+                                   f'{i[1][3]}', f'7', f'{teacher}')
+                    except Exception as e:
+                        start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе парсинга планшетки(2) \n'
+                                                 f'Данные вызванные ошибку: {i}'
+                                                 f'описание ошибки: {e}')
+            start_message(TG_Bot_ID, f'Расписание с планшетки было занесено в календарь')
         except Exception as e:
-            start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе парсинга планшетки(2) \n'
+            start_message(TG_Bot_ID, f'Была вызвана ошибка в разделе парсинга планшетки(2.1) \n'
                                      f'описание ошибки: {e}')
 
+    def planchette_check():
+        """Функция проверяет соответствует ли планшетка требованиям"""
+        wb1 = openpyxl.load_workbook('planchette.xlsx')
+        worksheet = wb1['1 пара'].max_column
+        if worksheet == 9:
+            Parsing.planshet()
+        else:
+            start_message(TG_Bot_ID, f'Планшетка не соответствует требованиям')
+
+
 def Monday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
+    for time in ['04:30', '07:00', '08:00', '09:00', '10:30', '12:20', '13:10', '16:20', '17:45']:
+        schedule.every().day.at(time).do(planchet_id)
 
 
 def Tuesday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
-
-
-def Wednesday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
-
-
-def Thursday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
-
-
-def Friday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
-
-
-def Saturday():
-    for time in ['07:25', '09:00', '10:40', '12:35', '14:10', '16:00', '17:45']:
-        schedule.every().day.at(time).do(planchette_id)
+    for time in ['04:30', '07:00', '08:00', '09:00', '10:30', '12:20', '14:00', '15:50', '17:20', '18:00']:
+        schedule.every().day.at(time).do(planchet_id)
 
 
 def main():
-    schedule.every().monday.at('07:35').do(Monday)
-    schedule.every().tuesday.at('07:34').do(Tuesday)
-    schedule.every().wednesday.at('07:35').do(Wednesday)
-    schedule.every().thursday.at('07:35').do(Thursday)
-    schedule.every().friday.at('07:35').do(Friday)
-    schedule.every().saturday.at('07:35').do(Saturday)
-    schedule.every().sunday.at('12:55').do(Parcer.Par_Group)
-    schedule.every().sunday.at('14:00').do(Parcer.Par_Techer)
-
-
+    """Функция запускает другие функции в определенное время и день недели"""
+    schedule.every().monday.at('04:25').do(Monday)
+    schedule.every().tuesday.at('04:25').do(Tuesday)
+    schedule.every().wednesday.at('04:24').do(Tuesday)
+    schedule.every().thursday.at('04:24').do(Tuesday)
+    schedule.every().friday.at('04:25').do(Tuesday)
+    schedule.every().saturday.at('04:25').do(Tuesday)
+    schedule.every().sunday.at('12:55').do(Parsing.Par_Group)
+    schedule.every().sunday.at('14:00').do(Parsing.Par_Techer)
     while True:
         schedule.run_pending()
 
+
 if __name__ == '__main__':
-    main()
+    planchet_id()
 
 bot.infinity_polling()
